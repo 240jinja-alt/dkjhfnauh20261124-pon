@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<title>Cuezy ポン出し</title>
+<meta name="theme-color" content="#121214">
+<meta name="apple-mobile-web-app-title" content="Cuezy">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<script src="libs/jszip.min.js"></script>
+<style>
+* {
+box-sizing: border-box;
+user-select: none;
+-webkit-user-select: none;
+-webkit-tap-highlight-color: transparent;
+}
+body {
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+background-color: #121214;
+color: #e2e8f0;
+margin: 0;
+padding: 8px 8px calc(8px + env(safe-area-inset-bottom)) 8px;
+display: flex;
+flex-direction: column;
+align-items: center;
+height: 100vh;
+height: -webkit-fill-available;
+overflow: hidden; /* 本番での誤スクロールを完全に防止 */
+}
+header {
+text-align: center;
+margin-bottom: 4px;
+flex: none;
+}
+h1 {
+margin: 0;
+font-size: 16px;
+color: #00adb5;
+letter-spacing: 0.5px;
+}
+.subtitle {
+font-size: 9px;
+color: #718096;
+margin: 0;
+}
+/* プログレスバー */
+.progress-container {
+width: 100%;
+max-width: 900px;
+background: #1a1a1e;
+border: 1px solid #2d3748;
+border-radius: 6px;
+padding: 8px;
+margin-bottom: 6px;
+display: none;
+flex: none;
+}
+.progress-header {
+display: flex;
+justify-content: space-between;
+font-size: 10px;
+margin-bottom: 4px;
+color: #a0aec0;
+}
+.progress-bar-bg {
+width: 100%;
+height: 6px;
+background: #2d3748;
+border-radius: 3px;
+overflow: hidden;
+}
+.progress-bar-fill {
+width: 0%;
+height: 100%;
+background: #00adb5;
+transition: width 0.1s ease;
+}
+.progress-container.error .progress-bar-fill {
+background: #e53e3e;
+}
+
+/* コントロールパネル */
+.global-controls {
+background-color: #1a1a1e;
+border: 1px solid #2d3748;
+border-radius: 8px;
+padding: 4px 6px;
+margin-bottom: 6px;
+display: flex;
+gap: 6px;
+align-items: center;
+font-size: 11px;
+flex-wrap: wrap;
+justify-content: center;
+width: 100%;
+max-width: 900px;
+flex: none;
+}
+.control-group {
+display: flex;
+align-items: center;
+gap: 4px;
+}
+.page-btn-container {
+display: flex;
+flex-direction: column;
+align-items: center;
+gap: 3px;
+background: rgba(0,0,0,0.2);
+padding: 4px 6px;
+border-radius: 6px;
+border: 1px solid #2d3748;
+}
+.page-row {
+display: flex;
+gap: 3px;
+}
+.page-btn {
+background-color: #2d3748;
+color: white;
+border: 1px solid #4a5568;
+padding: 3px 8px;
+border-radius: 4px;
+cursor: pointer;
+font-weight: bold;
+font-size: 11px;
+}
+.page-btn.active {
+background-color: #00adb5;
+border-color: #fff;
+color: #121214;
+}
+.page-title-input {
+width: 120px;
+background: rgba(0, 0, 0, 0.4);
+border: 1px solid #4a5568;
+border-radius: 3px;
+color: #00adb5;
+font-size: 10px;
+text-align: center;
+padding: 1px 2px;
+font-weight: bold;
+}
+body:not(.is-editing) .page-title-input {
+pointer-events: none;
+border: none;
+background: transparent;
+color: #a0aec0;
+}
+.btn-lock {
+background-color: #2f855a;
+color: white;
+border: none;
+padding: 6px 10px;
+border-radius: 4px;
+font-weight: bold;
+font-size: 11px;
+}
+.btn-lock.editing {
+background-color: #dd6b20;
+}
+.btn-backup {
+background-color: #2b6cb0;
+color: white;
+border: none;
+padding: 4px 8px;
+border-radius: 4px;
+font-weight: bold;
+font-size: 10px;
+}
+.btn-danger {
+background-color: #e53e3e;
+color: white;
+border: none;
+padding: 5px 10px;
+border-radius: 4px;
+font-weight: bold;
+font-size: 11px;
+letter-spacing: 0.5px;
+}
+.status-msg {
+font-size: 10px;
+color: #38a169;
+}
+/* ─── グリッドシステム（詳細は末尾の汎用レイアウトCSS） ─── */
+.grid {
+display: grid;
+gap: 6px;
+width: 100%;
+max-width: 1200px;
+flex: 1;
+min-height: 0;
+}
+
+/* パッド様式 */
+.pad {
+position: relative;
+width: 100%;
+height: 100%;
+background-color: #22252c;
+border: 2px solid #3f444e;
+border-radius: 6px;
+display: flex;
+flex-direction: column;
+justify-content: space-between;
+cursor: pointer;
+transition: transform 0.05s ease, background-color 0.1s ease;
+box-shadow: 0 3px 5px rgba(0,0,0,0.2);
+min-height: 0;
+}
+.pad:active {
+transform: scale(0.98);
+}
+.pad.has-sound {
+border-color: #00adb5;
+background-color: #1b2a32;
+}
+.pad.playing {
+background-color: #00adb5 !important;
+border-color: #fff;
+box-shadow: 0 0 12px rgba(0, 173, 181, 0.6);
+}
+.pad.playing .pad-name, .pad.playing .mode-badge, .pad.playing .pad-desc-textarea {
+color: #121214 !important;
+}
+.pad-header {
+display: flex;
+justify-content: space-between;
+align-items: center;
+width: 100%;
+}
+.pad-num {
+font-size: 9px;
+font-weight: bold;
+color: #4a5568;
+}
+.pad.has-sound .pad-num {
+color: #00adb5;
+}
+.playing .pad-num {
+color: #121214;
+}
+.mode-badge {
+font-size: 8px;
+background: rgba(255,255,255,0.1);
+padding: 1px 2px;
+border-radius: 2px;
+color: #a0aec0;
+}
+.pad-desc-textarea {
+width: 100%;
+background: rgba(0, 0, 0, 0.2);
+border: 1px dashed #4a5568;
+border-radius: 4px;
+color: #cbd5e0;
+text-align: center;
+resize: none;
+overflow: hidden;
+font-family: inherit;
+}
+body:not(.is-editing) .pad-desc-textarea {
+pointer-events: none;
+border: none;
+background: transparent;
+}
+.pad-desc-textarea:focus {
+outline: none;
+border-color: #00adb5;
+}
+.pad-name {
+text-align: center;
+word-break: break-all;
+display: -webkit-box;
+-webkit-line-clamp: 2;
+-webkit-box-orient: vertical;
+overflow: hidden;
+color: #636e72;
+}
+.pad.has-sound .pad-name {
+color: #cbd5e0;
+}
+.file-control-group {
+display: flex;
+gap: 3px;
+width: 100%;
+margin-top: auto;
+}
+.file-label {
+flex: 1;
+background-color: #2d3748;
+color: #cbd5e0;
+text-align: center;
+border-radius: 3px;
+cursor: pointer;
+}
+.pad-delete-btn {
+background-color: #742a2a;
+color: #feb2b2;
+border: none;
+font-size: 8px;
+padding: 3px 5px;
+border-radius: 3px;
+cursor: pointer;
+font-weight: bold;
+display: none;
+}
+.file-input { display: none; }
+.pad-fade-settings {
+display: flex;
+gap: 2px;
+width: 100%;
+font-size: 8px;
+margin-top: 2px;
+background: rgba(0,0,0,0.2);
+padding: 2px;
+border-radius: 3px;
+}
+.fade-select-group {
+flex: 1;
+display: flex;
+align-items: center;
+gap: 1px;
+color: #a0aec0;
+}
+.fade-select-group select {
+width: 100%;
+background: #2d3748;
+color: #fff;
+border: none;
+font-size: 8px;
+padding: 0;
+border-radius: 2px;
+}
+.pad-settings {
+display: flex;
+gap: 2px;
+width: 100%;
+margin-top: 3px;
+}
+.pad.playing .pad-settings, .pad.playing .pad-fade-settings, .pad.playing .file-control-group {
+display: none !important;
+}
+.setting-btn {
+flex: 1;
+background: #2d3748;
+color: #fff;
+border: none;
+border-radius: 2px;
+cursor: pointer;
+}
+.setting-btn.active {
+background: #319795;
+}
+body:not(.is-editing) .edit-only {
+display: none !important;
+}
+
+/* ═══════════ 汎用・1画面フィット（--k = 画面サイズに応じた倍率。JSが自動設定） ═══════════ */
+:root { --k: 1; }
+html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+body {
+height: 100vh;
+height: 100dvh;
+padding-top: calc(env(safe-area-inset-top) + 5px * var(--k));
+padding-bottom: calc(env(safe-area-inset-bottom) + 5px * var(--k));
+padding-left: calc(env(safe-area-inset-left) + 5px * var(--k));
+padding-right: calc(env(safe-area-inset-right) + 5px * var(--k));
+touch-action: manipulation;
+}
+header { display: none; }
+.progress-container { padding: calc(6px * var(--k)); margin-bottom: calc(4px * var(--k)); }
+.progress-header { font-size: calc(10px * var(--k)); }
+.global-controls {
+max-width: none;
+padding: calc(4px * var(--k));
+gap: calc(5px * var(--k));
+margin-bottom: calc(5px * var(--k));
+font-size: calc(11px * var(--k));
+}
+.btn-lock { flex: 1 1 auto; padding: calc(9px * var(--k)) calc(8px * var(--k)); font-size: calc(12px * var(--k)); }
+.btn-danger { padding: calc(9px * var(--k)) calc(12px * var(--k)); font-size: calc(12px * var(--k)); }
+.btn-backup { padding: calc(8px * var(--k)) calc(10px * var(--k)); font-size: calc(11px * var(--k)); }
+.global-controls select { font-size: calc(11px * var(--k)); }
+.status-msg { font-size: calc(9px * var(--k)); }
+.page-btn-container { flex: 1 1 auto; flex-direction: row; align-items: center; gap: calc(6px * var(--k)); padding: calc(3px * var(--k)) calc(4px * var(--k)); }
+.page-row { flex: 1; gap: calc(3px * var(--k)); }
+.page-btn { flex: 1; padding: calc(8px * var(--k)) 0; font-size: calc(14px * var(--k)); border-radius: calc(5px * var(--k)); }
+.page-title-input { width: calc(84px * var(--k)); font-size: calc(10.5px * var(--k)); }
+
+/* 本番モード: 縦=3列×4段 / 横=6列×2段 で必ず1画面に収める */
+.grid { gap: calc(5px * var(--k)); max-width: none; overflow: hidden; }
+@media (orientation: portrait) {
+.grid { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(4, minmax(0, 1fr)); }
+}
+@media (orientation: landscape) {
+.grid { grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.page-btn-container { flex: 0 1 auto; }
+}
+.pad { padding: calc(5px * var(--k)) !important; border-width: calc(1.5px * var(--k)); border-radius: calc(6px * var(--k)); min-height: 0; overflow: hidden; }
+.pad-num { font-size: calc(10px * var(--k)); }
+.mode-badge { font-size: calc(8px * var(--k)); }
+.pad-name { font-size: calc(10px * var(--k)); min-height: 0; margin: calc(2px * var(--k)) 0; line-height: 1.2; }
+.pad-desc-textarea { margin: calc(2px * var(--k)) 0; padding: 1px; line-height: 1.25; }
+.pad-header select.setting-btn { width: calc(46px * var(--k)) !important; font-size: calc(10px * var(--k)) !important; }
+
+/* 編集モード: スクロールして全設定項目を操作可能に（縦=2列 / 横=3列） */
+body.is-editing .grid {
+grid-template-rows: none;
+grid-auto-rows: minmax(calc(190px * var(--k)), auto);
+align-content: start;
+overflow-y: auto;
+-webkit-overflow-scrolling: touch;
+padding-bottom: calc(8px * var(--k));
+}
+@media (orientation: portrait) { body.is-editing .grid { grid-template-columns: repeat(2, 1fr); } }
+@media (orientation: landscape) { body.is-editing .grid { grid-template-columns: repeat(3, 1fr); } }
+body.is-editing .pad { min-height: calc(190px * var(--k)); }
+body.is-editing .setting-btn,
+body.is-editing .file-label { padding: calc(6px * var(--k)) 0; font-size: calc(11px * var(--k)); text-align: center; }
+body.is-editing .pad-fade-settings { font-size: calc(10px * var(--k)); padding: calc(3px * var(--k)); }
+body.is-editing .fade-select-group select { font-size: calc(11px * var(--k)); padding: calc(2px * var(--k)) 0; }
+body.is-editing .pad-delete-btn { font-size: calc(11px * var(--k)); padding: calc(6px * var(--k)) calc(9px * var(--k)); }
+
+/* パッドロック（誤タッチ防止） */
+.btn-padlock { background-color: #4a5568; min-width: calc(88px * var(--k)); }
+.btn-padlock.locked { background-color: #e53e3e; }
+body.pad-locked:not(.is-editing) .pad { pointer-events: none; }
+body.pad-locked:not(.is-editing) .pad:not(.playing) { opacity: 0.45; }
+</style>
+</head>
+<body>
+
+<header>
+<h1>Web ポン出し App Pro</h1>
+<p class="subtitle">12PAD×5PAGE / iOS AAC＆読込インジケーター完全対応</p>
+</header>
+
+<div class="progress-container" id="progress-area">
+<div class="progress-header">
+<span id="progress-title">処理中...</span>
+<span id="progress-text">0 / 0 件 (0%)</span>
+</div>
+<div class="progress-bar-bg">
+<div class="progress-bar-fill" id="progress-bar"></div>
+</div>
+</div>
+
+<div class="global-controls">
+<button class="btn-lock" id="lock-toggle-btn" onclick="toggleEditMode()">▶ 本番モード</button>
+
+<div class="page-btn-container">
+<div class="page-row">
+<button class="page-btn active" id="p-btn-1" onclick="switchPage(1)">1</button>
+<button class="page-btn" id="p-btn-2" onclick="switchPage(2)">2</button>
+<button class="page-btn" id="p-btn-3" onclick="switchPage(3)">3</button>
+<button class="page-btn" id="p-btn-4" onclick="switchPage(4)">4</button>
+<button class="page-btn" id="p-btn-5" onclick="switchPage(5)">5</button>
+</div>
+<input type="text" class="page-title-input" id="page-title-display" oninput="savePageTitle(this.value)" placeholder="シーン名">
+</div>
+<div class="control-group edit-only">
+<select id="global-font-size" onchange="changeAllFontSizes(this.value)">
+<option value="10px">極小文字</option>
+<option value="12px" selected>標準文字</option>
+<option value="15px">中文字</option>
+</select>
+</div>
+
+<div class="control-group edit-only">
+<button class="btn-backup" onclick="exportBackupZip()">書出</button>
+<button class="btn-backup" onclick="document.getElementById('import-file').click()">読込</button>
+<input type="file" id="import-file" accept=".zip,.json" style="display:none" onchange="importBackupFile(event)">
+</div>
+
+<button class="btn-danger btn-padlock" id="pad-lock-btn" onclick="togglePadLock()">🔓 ロック</button>
+<span class="status-msg" id="db-status">DB接続中...</span>
+</div>
+
+<div class="grid" id="pad-grid"></div>
+
+<script>
+// ─── JavaScript ロジックコア ───
+const PAD_COUNT = 12;
+
+// ─── 画面サイズ自動フィット ───
+function updateScale() {
+const vv = window.visualViewport;
+const w = vv ? vv.width : window.innerWidth;
+const h = vv ? vv.height : window.innerHeight;
+const portrait = h >= w;
+const base = portrait ? [375, 667] : [667, 375];
+let k = Math.min(w / base[0], h / base[1]);
+k = Math.max(0.65, Math.min(k, 2.2));
+document.documentElement.style.setProperty('--k', k.toFixed(3));
+document.body.style.height = h + 'px';
+for (let i = 1; i <= PAD_COUNT; i++) adjustTextareaHeight(document.getElementById('desc-' + i));
+}
+window.addEventListener('resize', updateScale);
+window.addEventListener('orientationchange', () => setTimeout(updateScale, 150));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', updateScale);
+window.addEventListener('DOMContentLoaded', updateScale);
+
+let currentPage = 1;
+let isEditing = false;
+const audioBuffers = {};
+const activeSources = {};
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+let audioCtx = new AudioContext();
+
+let db;
+const dbName = "SoundPadPro_Universal_Database_v15"
+const request = indexedDB.open(dbName, 1);
+
+function makeFadeOptionsHtml(currentVal) {
+let html = `<option value="0" ${currentVal === "0" ? "selected" : ""}>0s</option>`;
+for(let sec = 0.5; sec <= 5.0; sec += 0.5) {
+const val = sec.toFixed(1);
+html += `<option value="${val}" ${currentVal === val ? "selected" : ""}>${val}s</option>`;
+}
+return html;
+}
+
+function getUniversalItem(keyName) {
+return localStorage.getItem(`pad_data_${keyName}`) || localStorage.getItem(`${keyName}_v13`) || ""
+}
+
+function showProgress(title, current, total, isError = false, overrideText = "") {
+const area = document.getElementById('progress-area');
+const bar = document.getElementById('progress-bar');
+const txt = document.getElementById('progress-text');
+const ttl = document.getElementById('progress-title');
+area.style.display = "block"
+if(isError) { area.classList.add('error'); } else { area.classList.remove('error'); }
+ttl.innerText = title;
+if (overrideText !== "") {
+bar.style.width = "100%"
+txt.innerText = overrideText;
+return;
+}
+const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+bar.style.width = `${pct}%`;
+txt.innerText = `${current} / ${total} 件 (${pct}%)`;
+}
+
+function hideProgress() {
+document.getElementById('progress-area').style.display = "none"
+}
+
+request.onupgradeneeded = function(event) {
+db = event.target.result;
+if (!db.objectStoreNames.contains("sound_files")) db.createObjectStore("sound_files", { keyPath: "fileId" });
+if (!db.objectStoreNames.contains("pad_assignments")) db.createObjectStore("pad_assignments", { keyPath: "padKey" });
+};
+
+request.onsuccess = function(event) {
+db = event.target.result;
+document.getElementById('db-status').innerText = "ONLINE"
+loadSavedPadsForPage(currentPage);
+updatePageTitleDisplay();
+};
+
+request.onerror = function() {
+document.getElementById('db-status').innerText = "DB ERROR"
+};
+
+// グリッド要素の初期生成
+const grid = document.getElementById('pad-grid');
+for (let i = 1; i <= PAD_COUNT; i++) {
+const pad = document.createElement('div');
+pad.className = 'pad';
+pad.id = `pad-${i}`;
+pad.setAttribute('onclick', `handlePadClick(${i}, event)`);
+grid.appendChild(pad);
+}
+
+function toggleEditMode() {
+isEditing = !isEditing;
+const btn = document.getElementById('lock-toggle-btn');
+if (isEditing) {
+document.body.classList.add('is-editing');
+btn.innerText = "✏️ 編集モード (設定可)"
+btn.classList.add('editing');
+} else {
+document.body.classList.remove('is-editing');
+btn.innerText = "▶ 本番モード"
+btn.classList.remove('editing');
+document.activeElement.blur();
+}
+renderPageUI();
+updatePageTitleDisplay();
+}
+
+function savePageTitle(text) {
+localStorage.setItem(`pad_data_page_title_${currentPage}`, text);
+}
+
+function updatePageTitleDisplay() {
+const titleInput = document.getElementById('page-title-display');
+const savedTitle = getUniversalItem(`page_title_${currentPage}`);
+titleInput.value = savedTitle;
+if (!isEditing && savedTitle === '') {
+titleInput.value = `ページ ${currentPage}`;
+}
+}
+
+function switchPage(pageNumber) {
+if (pageNumber === currentPage) return;
+document.getElementById(`p-btn-${currentPage}`).classList.remove('active');
+document.getElementById(`p-btn-${pageNumber}`).classList.add('active');
+currentPage = pageNumber;
+updatePageTitleDisplay();
+renderPageUI();
+loadSavedPadsForPage(currentPage);
+}
+
+function renderPageUI() {
+const globalFont = document.getElementById('global-font-size').value;
+
+for (let i = 1; i <= PAD_COUNT; i++) {
+const keySuffix = `${currentPage}_${i}`;
+const savedMode = getUniversalItem(`pad_mode_${keySuffix}`) || 'normal';
+const savedDesc = getUniversalItem(`pad_desc_${keySuffix}`);
+const savedFontSize = getUniversalItem(`pad_font_${keySuffix}`) || globalFont;
+const savedFI = getUniversalItem(`pad_fi_${keySuffix}`) || "0"
+const savedFO = getUniversalItem(`pad_fo_${keySuffix}`) || "1.0"
+
+const pad = document.getElementById('pad-' + i);
+const activeKey = `${currentPage}_${i}`;
+const hasSound = !!audioBuffers[activeKey];
+if (activeSources[activeKey]) {
+pad.className = 'pad has-sound playing';
+} else {
+pad.className = hasSound ? 'pad has-sound' : 'pad';
+}
+
+// 【iOS対応】accept属性にAACおよびM4Aの拡張子、MIMEタイプを明示的に指定
+pad.innerHTML = `
+<div class="pad-header">
+<span class="pad-num">#${i}</span>
+<select class="setting-btn edit-only" style="flex:none; width:42px; font-size:8px; padding:0;" onclick="event.stopPropagation();" onchange="setPadFontSize(${i}, this.value)" id="font-select-${i}">
+<option value="10px">10px</option>
+<option value="12px">12px</option>
+<option value="15px">15px</option>
+</select>
+<span class="mode-badge" id="mode-badge-${i}">${savedMode.toUpperCase()}</span>
+</div>
+<textarea class="pad-desc-textarea" id="desc-${i}" placeholder="${isEditing ? '[入力]' : ''}" rows="1" onclick="event.stopPropagation();" oninput="handleDescInput(${i}, this.value)" style="font-size: calc(${savedFontSize} * var(--k));" ${!isEditing ? 'readonly tabIndex="-1"' : ''}>${savedDesc}</textarea>
+<div class="pad-name" id="name-${i}"></div>
+<div class="file-control-group edit-only">
+<label class="file-label" onclick="event.stopPropagation();" for="file-${i}">音源選択</label>
+<button class="pad-delete-btn" id="del-btn-${i}" onclick="deleteSoundFromPad(${i}, event)">×</button>
+</div>
+<input type="file" class="file-input" id="file-${i}" accept="audio/*,audio/aac,audio/x-aac,audio/mp4,audio/m4a,.aac,.m4a" onclick="event.stopPropagation();" onchange="handleFileSelect(${i}, event)">
+<div class="pad-fade-settings edit-only" onclick="event.stopPropagation();">
+<div class="fade-select-group"><span>In:</span><select id="fi-select-${i}" onchange="savePadFadeSettings(${i}, 'in', this.value)">${makeFadeOptionsHtml(savedFI)}</select></div>
+<div class="fade-select-group"><span>Out:</span><select id="fo-select-${i}" onchange="savePadFadeSettings(${i}, 'out', this.value)">${makeFadeOptionsHtml(savedFO)}</select></div>
+</div>
+
+<div class="pad-settings edit-only" onclick="event.stopPropagation();">
+<button class="setting-btn ${savedMode === 'normal' ? 'active' : ''}" id="btn-norm-${i}" onclick="setMode(${i}, 'normal')">通常</button>
+<button class="setting-btn ${savedMode === 'solo' ? 'active' : ''}" id="btn-solo-${i}" onclick="setMode(${i}, 'solo')">ソロ</button>
+<button class="setting-btn ${savedMode === 'loop' ? 'active' : ''}" id="btn-loop-${i}" onclick="setMode(${i}, 'loop')">ルプ</button>
+</div>
+`;
+if (isEditing) {
+document.getElementById(`font-select-${i}`).value = savedFontSize;
+if (hasSound) document.getElementById(`del-btn-${i}`).style.display = 'block';
+}
+setTimeout(() => { adjustTextareaHeight(document.getElementById(`desc-${i}`)); }, 0);
+}
+}
+
+function savePadFadeSettings(padId, type, val) {
+const keySuffix = `${currentPage}_${padId}`;
+localStorage.setItem(type === 'in' ? `pad_data_pad_fi_${keySuffix}` : `pad_data_pad_fo_${keySuffix}`, val);
+}
+
+function adjustTextareaHeight(el) {
+if (!el) return;
+el.style.height = 'auto';
+el.style.height = el.scrollHeight + 'px';
+}
+
+function handleDescInput(padId, text) {
+localStorage.setItem(`pad_data_pad_desc_${currentPage}_${padId}`, text);
+adjustTextareaHeight(document.getElementById(`desc-${padId}`));
+}
+
+function setPadFontSize(padId, size) {
+const el = document.getElementById(`desc-${padId}`);
+if(!el) return;
+el.style.fontSize = `calc(${size} * var(--k))`;
+localStorage.setItem(`pad_data_pad_font_${currentPage}_${padId}`, size);
+adjustTextareaHeight(el);
+}
+
+function changeAllFontSizes(size) {
+localStorage.setItem('pad_data_global_font_size', size);
+for (let i = 1; i <= PAD_COUNT; i++) {
+setPadFontSize(i, size);
+const selectEl = document.getElementById('font-select-' + i);
+if (selectEl) selectEl.value = size;
+}
+}
+
+function setMode(padId, mode) {
+const keySuffix = `${currentPage}_${padId}`;
+localStorage.setItem(`pad_data_pad_mode_${keySuffix}`, mode);
+document.getElementById(`btn-norm-${padId}`).classList.toggle('active', mode === 'normal');
+document.getElementById(`btn-solo-${padId}`).classList.toggle('active', mode === 'solo');
+document.getElementById(`btn-loop-${padId}`).classList.toggle('active', mode === 'loop');
+document.getElementById(`mode-badge-${padId}`).innerText = mode.toUpperCase();
+}
+
+function handleFileSelect(padId, event) {
+const file = event.target.files[0];
+if (!file) return;
+showProgress("音源ファイルを読み込み中...", 0, 100, false, "ファイルを展開しています...");
+document.getElementById(`name-${padId}`).innerText = "ロード中..."
+const reader = new FileReader();
+reader.onload = function(e) {
+const padKey = `${currentPage}_${padId}`;
+const fileId = `file_${file.name}_${file.size}`;
+saveSoundToPoolAndAssign(padKey, fileId, file.name, e.target.result);
+};
+reader.readAsArrayBuffer(file);
+}
+
+function saveSoundToPoolAndAssign(padKey, fileId, fileName, arrayBuffer) {
+if (!db) return;
+showProgress("データベースへ保存中...", 50, 100, false, "IndexedDBへ書き込み中...");
+const transaction = db.transaction(["sound_files", "pad_assignments"], "readwrite");
+transaction.objectStore("sound_files").put({ fileId: fileId, name: fileName, buffer: arrayBuffer });
+transaction.objectStore("pad_assignments").put({ padKey: padKey, fileId: fileId, name: fileName });
+transaction.oncomplete = function() {
+processAudioBuffer(currentPage, parseInt(padKey.split('_')[1]), fileName, arrayBuffer, true);
+};
+}
+
+function processAudioBuffer(page, padId, fileName, arrayBuffer, shouldHideProgress = false) {
+const padKey = `${page}_${padId}`;
+if (audioCtx.state === 'suspended') audioCtx.resume();
+if (shouldHideProgress) {
+showProgress("オーディオ変換中...", 80, 100, false, "ブラウザ用音源へデコード中...");
+}
+
+audioCtx.decodeAudioData(arrayBuffer.slice(0), (buffer) => {
+audioBuffers[padKey] = buffer;
+if (page === currentPage) {
+document.getElementById(`name-${padId}`).innerText = fileName;
+document.getElementById(`pad-${padId}`).classList.add('has-sound');
+if (isEditing) document.getElementById(`del-btn-${padId}`).style.display = 'block';
+}
+if (shouldHideProgress) hideProgress();
+}, (err) => {
+if (page === currentPage) document.getElementById(`name-${padId}`).innerText = "解読不可"
+console.error(err);
+if (shouldHideProgress) showProgress("エラー", 0, 100, true, "音源のデコードに失敗しました");
+});
+}
+
+function deleteSoundFromPad(padId, event) {
+event.stopPropagation();
+const padKey = `${currentPage}_${padId}`;
+if (!confirm(`#${padId} の音源登録を解除しますか？`)) return;
+
+if (activeSources[padKey]) fadeOutAndStop(currentPage, padId);
+delete audioBuffers[padKey];
+
+if (db) {
+const transaction = db.transaction(["pad_assignments"], "readwrite");
+transaction.objectStore("pad_assignments").delete(padKey);
+}
+renderPageUI();
+}
+
+function loadSavedPadsForPage(page) {
+if (!db) return;
+renderPageUI();
+const transaction = db.transaction(["sound_files", "pad_assignments"], "readonly");
+const assignStore = transaction.objectStore("pad_assignments");
+const fileStore = transaction.objectStore("sound_files");
+let totalToLoad = 0;
+let loadedCount = 0;
+const loadList = [];
+
+for (let i = 1; i <= PAD_COUNT; i++) {
+const padKey = `${page}_${i}`;
+const idx = i;
+assignStore.get(padKey).onsuccess = function(event) {
+const assignData = event.target.result;
+if (assignData) {
+if (audioBuffers[padKey]) {
+document.getElementById(`name-${idx}`).innerText = assignData.name;
+document.getElementById(`pad-${idx}`).classList.add('has-sound');
+} else {
+totalToLoad++;
+loadList.push({ padId: idx, assignData: assignData });
+}
+}
+if (idx === PAD_COUNT && loadList.length > 0) {
+showProgress("ストレージから音源を読込中...", loadedCount, totalToLoad);
+loadList.forEach(item => {
+fileStore.get(item.assignData.fileId).onsuccess = function(fe) {
+if (fe.target.result) {
+const padKeyStr = `${page}_${item.padId}`;
+if (audioCtx.state === 'suspended') audioCtx.resume();
+audioCtx.decodeAudioData(fe.target.result.buffer.slice(0), (buffer) => {
+audioBuffers[padKeyStr] = buffer;
+if (page === currentPage) {
+document.getElementById(`name-${item.padId}`).innerText = item.assignData.name;
+document.getElementById(`pad-${item.padId}`).classList.add('has-sound');
+if (isEditing) document.getElementById(`del-btn-${item.padId}`).style.display = 'block';
+}
+loadedCount++;
+showProgress("ストレージから音源を読込中...", loadedCount, totalToLoad);
+if (loadedCount === totalToLoad) hideProgress();
+}, (err) => {
+if (page === currentPage) document.getElementById(`name-${item.padId}`).innerText = "解読不可"
+loadedCount++;
+showProgress("ストレージから音源を読込中...", loadedCount, totalToLoad);
+if (loadedCount === totalToLoad) hideProgress();
+});
+} else {
+loadedCount++;
+if (loadedCount === totalToLoad) hideProgress();
+}
+};
+});
+}
+};
+}
+}
+
+
+// ─── パッドロック（ロック中はパッドを触っても反応しない） ───
+let padLocked = false;
+function togglePadLock() {
+padLocked = !padLocked;
+document.body.classList.toggle('pad-locked', padLocked);
+const btn = document.getElementById('pad-lock-btn');
+btn.classList.toggle('locked', padLocked);
+btn.innerText = padLocked ? '🔒 ロック中' : '🔓 ロック';
+}
+
+// ─── 音声再生ロジック ───
+function handlePadClick(padId, event) {
+if (padLocked) return;
+if (audioCtx.state === 'suspended') audioCtx.resume();
+const currentKey = `${currentPage}_${padId}`;
+
+if (activeSources[currentKey]) {
+fadeOutAndStop(currentPage, padId);
+return;
+}
+
+const buffer = audioBuffers[currentKey];
+if (!buffer) return;
+
+const savedMode = getUniversalItem(`pad_mode_${currentKey}`) || 'normal';
+if (savedMode === 'solo' || hasActiveSolo()) stopAllSounds();
+
+const source = audioCtx.createBufferSource();
+source.buffer = buffer;
+if (savedMode === 'loop') source.loop = true;
+
+const gainNode = audioCtx.createGain();
+const fadeInTime = parseFloat(getUniversalItem(`pad_fi_${currentKey}`) || "0");
+if (fadeInTime > 0) {
+gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+gainNode.gain.linearRampToValueAtTime(1, audioCtx.currentTime + fadeInTime);
+} else {
+gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
+}
+
+source.connect(gainNode);
+gainNode.connect(audioCtx.destination);
+source.start(0);
+
+activeSources[currentKey] = { source, gainNode, mode: savedMode };
+document.getElementById(`pad-${padId}`).classList.add('playing');
+
+if (savedMode !== 'loop') {
+source.onended = () => {
+if (activeSources[currentKey] && activeSources[currentKey].source === source) {
+delete activeSources[currentKey];
+const padEl = document.getElementById(`pad-${padId}`);
+if (padEl) padEl.classList.remove('playing');
+}
+};
+}
+}
+
+function hasActiveSolo() {
+return Object.values(activeSources).some(src => src.mode === 'solo');
+}
+
+function fadeOutAndStop(page, padId) {
+const targetKey = `${page}_${padId}`;
+const active = activeSources[targetKey];
+if (!active) return;
+
+const fadeOutTime = parseFloat(getUniversalItem(`pad_fo_${targetKey}`) || "1.0");
+const gainNode = active.gainNode;
+const source = active.source;
+delete activeSources[targetKey];
+if (page === currentPage) document.getElementById(`pad-${padId}`).classList.remove('playing');
+
+if (fadeOutTime > 0) {
+gainNode.gain.setValueAtTime(gainNode.gain.value, audioCtx.currentTime);
+gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + fadeOutTime);
+setTimeout(() => { try { source.stop(); } catch(e) {} }, fadeOutTime * 1000);
+} else {
+try { source.stop(); } catch(e) {}
+}
+}
+
+function stopAllSounds() {
+Object.keys(activeSources).forEach(key => {
+const parts = key.split('_');
+fadeOutAndStop(parseInt(parts[0]), parseInt(parts[1]));
+});
+}
+
+// ─── バックアップ機能 (ZIP) ───
+function exportBackupZip() {
+if (!db) return;
+showProgress("ZIPデータ生成中...", 0, 100, false, "構成ファイルを準備中...");
+const zip = new JSZip();
+let settingsMap = {};
+for (let i = 0; i < localStorage.length; i++) {
+const key = localStorage.key(i);
+if (key.startsWith('pad_data_')) settingsMap[key] = localStorage.getItem(key);
+}
+
+const transaction = db.transaction(["sound_files", "pad_assignments"], "readonly");
+transaction.objectStore("pad_assignments").getAll().onsuccess = function(e) {
+const config = { settings: settingsMap, assignments: e.target.result };
+zip.file("config.json", JSON.stringify(config));
+
+transaction.objectStore("sound_files").getAll().onsuccess = function(fe) {
+const files = fe.target.result;
+files.forEach((f, index) => {
+zip.file(`sounds/${f.fileId}`, f.buffer);
+showProgress("ZIPデータ圧縮中...", index + 1, files.length);
+});
+showProgress("ZIPパッケージ作成中...", 95, 100, false, "ブラウザでダウンロードを処理中...");
+zip.generateAsync({ type: "blob" }).then(function(blob) {
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = `SoundPad_Backup.zip`;
+a.click();
+hideProgress();
+});
+};
+};
+}
+
+function importBackupFile(event) {
+const file = event.target.files[0];
+if (!file || !confirm("全データを上書き復元しますか？")) return;
+
+showProgress("インポート展開中...", 10, 100, false, "ZIPファイルを解析中...");
+const zip = new JSZip();
+zip.loadAsync(file).then(function(contents) {
+contents.file("config.json").async("text").then(function(text) {
+const pkg = JSON.parse(text);
+if (pkg.settings) Object.keys(pkg.settings).forEach(k => localStorage.setItem(k, pkg.settings[k]));
+
+const transaction = db.transaction(["sound_files", "pad_assignments"], "readwrite");
+transaction.objectStore("sound_files").clear();
+transaction.objectStore("pad_assignments").clear();
+
+pkg.assignments.forEach(a => transaction.objectStore("pad_assignments").put(a));
+
+const soundFiles = [];
+contents.folder("sounds").forEach((p, f) => soundFiles.push(f));
+let done = 0;
+if(soundFiles.length === 0) { location.reload(); return; }
+
+soundFiles.forEach(sf => {
+const fId = sf.name.replace("sounds/", "");
+const match = pkg.assignments.find(a => a.fileId === fId);
+sf.async("arraybuffer").then(buf => {
+transaction.objectStore("sound_files").put({ fileId: fId, name: match?match.name:"Restored", buffer: buf });
+done++;
+showProgress("音源データベースの復元中...", done, soundFiles.length);
+if(done === soundFiles.length) {
+showProgress("完了", 100, 100, false, "アプリをリロードします...");
+setTimeout(() => {
+alert("復元が完了しました！");
+location.reload();
+}, 500);
+}
+});
+});
+});
+}).catch(err => {
+console.error(err);
+showProgress("エラー", 0, 100, true, "ZIPファイルの展開に失敗しました");
+});
+}
+
+// ─── PWA: オフライン対応 ───
+if ('serviceWorker' in navigator) {
+window.addEventListener('load', () => {
+navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW登録失敗', err));
+});
+}
+// ストレージの自動削除をできるだけ防ぐ（対応ブラウザのみ）
+if (navigator.storage && navigator.storage.persist) {
+navigator.storage.persist().catch(() => {});
+}
+</script>
+</body>
+</html>
