@@ -450,6 +450,7 @@ body.pad-locked:not(.is-editing) .pad:not(.playing) { opacity: 0.45; }
 <div class="progress-bar-bg">
 <div class="progress-bar-fill" id="progress-bar"></div>
 </div>
+<button class="btn-backup" id="progress-action" style="display:none; width:100%; margin-top:8px;"></button>
 </div>
 
 <div class="global-controls">
@@ -476,7 +477,7 @@ body.pad-locked:not(.is-editing) .pad:not(.playing) { opacity: 0.45; }
 <div class="control-group edit-only">
 <button class="btn-backup" onclick="exportBackupZip()">書出</button>
 <button class="btn-backup" onclick="document.getElementById('import-file').click()">読込</button>
-<input type="file" id="import-file" accept=".zip,.json" style="display:none" onchange="importBackupFile(event)">
+<input type="file" id="import-file" accept=".zip,application/zip" style="display:none" onchange="importBackupFile(event)">
 </div>
 
 <button class="btn-danger btn-padlock" id="pad-lock-btn" onclick="togglePadLock()">🔓 ロック</button>
@@ -511,12 +512,17 @@ let currentPage = 1;
 let isEditing = false;
 const audioBuffers = {};
 const activeSources = {};
+const padNames = {};
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 let audioCtx = new AudioContext();
 
 let db;
 const dbName = "SoundPadPro_Universal_Database_v15"
 const request = indexedDB.open(dbName, 1);
+
+function escapeHtml(t) {
+return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 function makeFadeOptionsHtml(currentVal) {
 let html = `<option value="0" ${currentVal === "0" ? "selected" : ""}>0s</option>`;
@@ -537,6 +543,7 @@ const bar = document.getElementById('progress-bar');
 const txt = document.getElementById('progress-text');
 const ttl = document.getElementById('progress-title');
 area.style.display = "block"
+document.getElementById('progress-action').style.display = "none";
 if(isError) { area.classList.add('error'); } else { area.classList.remove('error'); }
 ttl.innerText = title;
 if (overrideText !== "") {
@@ -569,6 +576,12 @@ updatePageTitleDisplay();
 request.onerror = function() {
 document.getElementById('db-status').innerText = "DB ERROR"
 };
+
+(function restoreGlobalFont() {
+const gf = localStorage.getItem('pad_data_global_font_size');
+const sel = document.getElementById('global-font-size');
+if (gf && sel && Array.from(sel.options).some(o => o.value === gf)) sel.value = gf;
+})();
 
 // グリッド要素の初期生成
 const grid = document.getElementById('pad-grid');
@@ -651,8 +664,8 @@ pad.innerHTML = `
 </select>
 <span class="mode-badge" id="mode-badge-${i}">${savedMode.toUpperCase()}</span>
 </div>
-<textarea class="pad-desc-textarea" id="desc-${i}" placeholder="${isEditing ? '[入力]' : ''}" rows="1" onclick="event.stopPropagation();" oninput="handleDescInput(${i}, this.value)" style="font-size: calc(${savedFontSize} * var(--k));" ${!isEditing ? 'readonly tabIndex="-1"' : ''}>${savedDesc}</textarea>
-<div class="pad-name" id="name-${i}"></div>
+<textarea class="pad-desc-textarea" id="desc-${i}" placeholder="${isEditing ? '[入力]' : ''}" rows="1" onclick="event.stopPropagation();" oninput="handleDescInput(${i}, this.value)" style="font-size: calc(${savedFontSize} * var(--k));" ${!isEditing ? 'readonly tabIndex="-1"' : ''}>${escapeHtml(savedDesc)}</textarea>
+<div class="pad-name" id="name-${i}">${escapeHtml(padNames[activeKey] || "")}</div>
 <div class="file-control-group edit-only">
 <label class="file-label" onclick="event.stopPropagation();" for="file-${i}">音源選択</label>
 <button class="pad-delete-btn" id="del-btn-${i}" onclick="deleteSoundFromPad(${i}, event)">×</button>
@@ -725,12 +738,45 @@ if (!file) return;
 showProgress("音源ファイルを読み込み中...", 0, 100, false, "ファイルを展開しています...");
 document.getElementById(`name-${padId}`).innerText = "ロード中..."
 const reader = new FileReader();
-reader.onload = function(e) {
+reader.onload = async function(e) {
 const padKey = `${currentPage}_${padId}`;
-const fileId = `file_${file.name}_${file.size}`;
+const fileId = await makeFileId(file, e.target.result);
 saveSoundToPoolAndAssign(padKey, fileId, file.name, e.target.result);
 };
+reader.onerror = function() {
+showProgress("エラー", 0, 100, true, "ファイルを読み込めませんでした");
+renderPageUI();
+};
 reader.readAsArrayBuffer(file);
+}
+
+// 内容のハッシュで音源を識別（同じ内容は1つにまとめ、名前とサイズが同じ別ファイルは別物として扱う）
+async function makeFileId(file, arrayBuffer) {
+try {
+if (window.crypto && crypto.subtle) {
+const d = await crypto.subtle.digest('SHA-256', arrayBuffer);
+return 'sha_' + Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+} catch (e) {}
+return `file_${file.name}_${file.size}_${file.lastModified}`;
+}
+
+// どのパッドからも使われていない音源を削除（容量とバックアップサイズの肥大化防止）
+function gcSoundPool() {
+if (!db) return;
+const tx = db.transaction(["sound_files", "pad_assignments"], "readwrite");
+const used = new Set();
+tx.objectStore("pad_assignments").openCursor().onsuccess = function(e) {
+const c = e.target.result;
+if (c) { used.add(c.value.fileId); c.continue(); return; }
+const sf = tx.objectStore("sound_files");
+sf.openKeyCursor().onsuccess = function(e2) {
+const k = e2.target.result;
+if (!k) return;
+if (!used.has(k.key)) sf.delete(k.key);
+k.continue();
+};
+};
 }
 
 function saveSoundToPoolAndAssign(padKey, fileId, fileName, arrayBuffer) {
@@ -741,6 +787,11 @@ transaction.objectStore("sound_files").put({ fileId: fileId, name: fileName, buf
 transaction.objectStore("pad_assignments").put({ padKey: padKey, fileId: fileId, name: fileName });
 transaction.oncomplete = function() {
 processAudioBuffer(currentPage, parseInt(padKey.split('_')[1]), fileName, arrayBuffer, true);
+gcSoundPool();
+};
+transaction.onabort = function() {
+showProgress("エラー", 0, 100, true, "保存に失敗しました（端末の空き容量を確認してください）");
+renderPageUI();
 };
 }
 
@@ -753,6 +804,7 @@ showProgress("オーディオ変換中...", 80, 100, false, "ブラウザ用音�
 
 audioCtx.decodeAudioData(arrayBuffer.slice(0), (buffer) => {
 audioBuffers[padKey] = buffer;
+padNames[padKey] = fileName;
 if (page === currentPage) {
 document.getElementById(`name-${padId}`).innerText = fileName;
 document.getElementById(`pad-${padId}`).classList.add('has-sound');
@@ -773,10 +825,12 @@ if (!confirm(`#${padId} の音源登録を解除しますか？`)) return;
 
 if (activeSources[padKey]) fadeOutAndStop(currentPage, padId);
 delete audioBuffers[padKey];
+delete padNames[padKey];
 
 if (db) {
 const transaction = db.transaction(["pad_assignments"], "readwrite");
 transaction.objectStore("pad_assignments").delete(padKey);
+transaction.oncomplete = gcSoundPool;
 }
 renderPageUI();
 }
@@ -798,6 +852,7 @@ assignStore.get(padKey).onsuccess = function(event) {
 const assignData = event.target.result;
 if (assignData) {
 if (audioBuffers[padKey]) {
+padNames[padKey] = assignData.name;
 document.getElementById(`name-${idx}`).innerText = assignData.name;
 document.getElementById(`pad-${idx}`).classList.add('has-sound');
 } else {
@@ -814,6 +869,7 @@ const padKeyStr = `${page}_${item.padId}`;
 if (audioCtx.state === 'suspended') audioCtx.resume();
 audioCtx.decodeAudioData(fe.target.result.buffer.slice(0), (buffer) => {
 audioBuffers[padKeyStr] = buffer;
+padNames[padKeyStr] = item.assignData.name;
 if (page === currentPage) {
 document.getElementById(`name-${item.padId}`).innerText = item.assignData.name;
 document.getElementById(`pad-${item.padId}`).classList.add('has-sound');
@@ -930,82 +986,155 @@ fadeOutAndStop(parseInt(parts[0]), parseInt(parts[1]));
 }
 
 // ─── バックアップ機能 (ZIP) ───
-function exportBackupZip() {
-if (!db) return;
-showProgress("ZIPデータ生成中...", 0, 100, false, "構成ファイルを準備中...");
-const zip = new JSZip();
-let settingsMap = {};
-for (let i = 0; i < localStorage.length; i++) {
-const key = localStorage.key(i);
-if (key.startsWith('pad_data_')) settingsMap[key] = localStorage.getItem(key);
+let pendingBackup = null;
+
+function backupStamp() {
+const d = new Date();
+const p = n => String(n).padStart(2, '0');
+return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 }
 
-const transaction = db.transaction(["sound_files", "pad_assignments"], "readonly");
-transaction.objectStore("pad_assignments").getAll().onsuccess = function(e) {
-const config = { settings: settingsMap, assignments: e.target.result };
-zip.file("config.json", JSON.stringify(config));
+function exportBackupZip() {
+if (!db) return;
+pendingBackup = null;
+showProgress("バックアップ作成中...", 0, 100, false, "構成ファイルを準備中...");
+const fail = (err) => {
+console.error(err);
+showProgress("エラー", 0, 100, true, "バックアップの作成に失敗しました");
+};
+try {
+const zip = new JSZip();
+const settingsMap = {};
+for (let i = 0; i < localStorage.length; i++) {
+const key = localStorage.key(i);
+if (key && key.startsWith('pad_data_')) settingsMap[key] = localStorage.getItem(key);
+}
+const tx = db.transaction(["sound_files", "pad_assignments"], "readonly");
+tx.onabort = () => fail(tx.error);
+tx.objectStore("pad_assignments").getAll().onsuccess = function(e) {
+const assignments = e.target.result;
+const used = new Set(assignments.map(a => a.fileId));
+tx.objectStore("sound_files").getAll().onsuccess = function(fe) {
+// 割り当てのない音源（削除済みのゴミデータ）は含めない
+const files = fe.target.result.filter(f => used.has(f.fileId));
+zip.file("config.json", JSON.stringify({ version: 2, settings: settingsMap, assignments: assignments }));
+files.forEach(f => zip.file(`sounds/${f.fileId}`, f.buffer, { binary: true }));
+zip.generateAsync({ type: "blob", compression: "STORE" }, function(meta) {
+showProgress("ZIPパッケージ作成中...", Math.round(meta.percent), 100);
+}).then(function(blob) {
+pendingBackup = { blob: blob, name: `Cuezy_Backup_${backupStamp()}.zip` };
+showBackupReady(files.length);
+}).catch(fail);
+};
+};
+} catch (err) { fail(err); }
+}
 
-transaction.objectStore("sound_files").getAll().onsuccess = function(fe) {
-const files = fe.target.result;
-files.forEach((f, index) => {
-zip.file(`sounds/${f.fileId}`, f.buffer);
-showProgress("ZIPデータ圧縮中...", index + 1, files.length);
-});
-showProgress("ZIPパッケージ作成中...", 95, 100, false, "ブラウザでダウンロードを処理中...");
-zip.generateAsync({ type: "blob" }).then(function(blob) {
+// 作成完了後、もう一度ボタンを押してもらって保存する（iOSは直前のタップが必要なため）
+function showBackupReady(count) {
+showProgress("バックアップ完成（音源 " + count + " 件）", 100, 100, false, "下のボタンで保存してください");
+const btn = document.getElementById('progress-action');
+btn.innerText = "💾 保存 / 共有";
+btn.onclick = saveBackupFile;
+btn.style.display = "block";
+}
+
+async function saveBackupFile() {
+if (!pendingBackup) return;
+const { blob, name } = pendingBackup;
+const file = new File([blob], name, { type: "application/zip" });
+if (navigator.canShare && navigator.canShare({ files: [file] })) {
+try {
+await navigator.share({ files: [file], title: name });
+pendingBackup = null; hideProgress();
+return;
+} catch (e) {
+if (e && e.name === 'AbortError') return; // 共有画面を閉じただけ。ボタンは残す
+}
+}
 const url = URL.createObjectURL(blob);
 const a = document.createElement('a');
 a.href = url;
-a.download = `SoundPad_Backup.zip`;
+a.download = name;
+document.body.appendChild(a);
 a.click();
+a.remove();
+setTimeout(() => URL.revokeObjectURL(url), 60000);
+pendingBackup = null;
 hideProgress();
-});
-};
-};
 }
 
 function importBackupFile(event) {
-const file = event.target.files[0];
-if (!file || !confirm("全データを上書き復元しますか？")) return;
+const input = event.target;
+const file = input.files[0];
+input.value = ''; // 同じファイルをもう一度選べるようにする
+if (!file) return;
+if (!confirm("全データを上書き復元しますか？\n（現在の音源と設定はすべて置き換わります）")) return;
+if (!db) return;
 
 showProgress("インポート展開中...", 10, 100, false, "ZIPファイルを解析中...");
-const zip = new JSZip();
-zip.loadAsync(file).then(function(contents) {
-contents.file("config.json").async("text").then(function(text) {
-const pkg = JSON.parse(text);
-if (pkg.settings) Object.keys(pkg.settings).forEach(k => localStorage.setItem(k, pkg.settings[k]));
+const fail = (msg, err) => {
+if (err) console.error(err);
+showProgress("エラー", 0, 100, true, msg + "（現在のデータは変更されていません）");
+};
 
-const transaction = db.transaction(["sound_files", "pad_assignments"], "readwrite");
-transaction.objectStore("sound_files").clear();
-transaction.objectStore("pad_assignments").clear();
+JSZip.loadAsync(file).then(async function(contents) {
+const cfgFile = contents.file("config.json");
+if (!cfgFile) throw new Error("NO_CONFIG");
+const pkg = JSON.parse(await cfgFile.async("text"));
+if (!pkg || !Array.isArray(pkg.assignments)) throw new Error("BAD_CONFIG");
+const settings = (pkg.settings && typeof pkg.settings === 'object') ? pkg.settings : {};
 
-pkg.assignments.forEach(a => transaction.objectStore("pad_assignments").put(a));
+// ① まず音源をすべてメモリに読み込む（この間 DB には一切触れない）
+const entries = contents.file(/^sounds\//).filter(f => !f.dir);
+const nameById = {};
+pkg.assignments.forEach(a => { if (!(a.fileId in nameById)) nameById[a.fileId] = a.name; });
+const soundRecords = [];
+for (let i = 0; i < entries.length; i++) {
+const f = entries[i];
+const fId = f.name.slice("sounds/".length);
+const buf = await f.async("arraybuffer");
+soundRecords.push({ fileId: fId, name: nameById[fId] || "Restored", buffer: buf });
+showProgress("音源データを読み込み中...", i + 1, entries.length);
+}
+const present = new Set(soundRecords.map(r => r.fileId));
+const assignments = pkg.assignments.filter(a => present.has(a.fileId));
+const missing = pkg.assignments.length - assignments.length;
 
-const soundFiles = [];
-contents.folder("sounds").forEach((p, f) => soundFiles.push(f));
-let done = 0;
-if(soundFiles.length === 0) { location.reload(); return; }
+// ② 1回のトランザクションで「消去→書き込み」（途中で失敗したら元のデータに戻る）
+showProgress("データベースへ書き込み中...", 95, 100, false, "IndexedDBへ書き込み中...");
+await new Promise((resolve, reject) => {
+const tx = db.transaction(["sound_files", "pad_assignments"], "readwrite");
+tx.oncomplete = resolve;
+tx.onabort = () => reject(tx.error || new Error("ABORT"));
+const sf = tx.objectStore("sound_files");
+const pa = tx.objectStore("pad_assignments");
+sf.clear(); pa.clear();
+soundRecords.forEach(r => sf.put(r));
+assignments.forEach(a => pa.put(a));
+});
 
-soundFiles.forEach(sf => {
-const fId = sf.name.replace("sounds/", "");
-const match = pkg.assignments.find(a => a.fileId === fId);
-sf.async("arraybuffer").then(buf => {
-transaction.objectStore("sound_files").put({ fileId: fId, name: match?match.name:"Restored", buffer: buf });
-done++;
-showProgress("音源データベースの復元中...", done, soundFiles.length);
-if(done === soundFiles.length) {
+// ③ 設定を復元（既存の設定は先に消して、バックアップの内容と完全に一致させる）
+const oldKeys = [];
+for (let i = 0; i < localStorage.length; i++) {
+const k = localStorage.key(i);
+if (k && k.startsWith('pad_data_')) oldKeys.push(k);
+}
+oldKeys.forEach(k => localStorage.removeItem(k));
+Object.keys(settings).forEach(k => {
+if (k.startsWith('pad_data_')) localStorage.setItem(k, String(settings[k]));
+});
+
 showProgress("完了", 100, 100, false, "アプリをリロードします...");
 setTimeout(() => {
-alert("復元が完了しました！");
+alert("復元が完了しました！" + (missing > 0 ? `\n（音源が見つからなかった ${missing} 件は復元されていません）` : ""));
 location.reload();
 }, 500);
-}
-});
-});
-});
-}).catch(err => {
-console.error(err);
-showProgress("エラー", 0, 100, true, "ZIPファイルの展開に失敗しました");
+}).catch(function(err) {
+const m = err && err.message;
+if (m === "NO_CONFIG" || m === "BAD_CONFIG") fail("Cuezy のバックアップファイルではありません", err);
+else if (err && err.name === "QuotaExceededError") fail("端末の空き容量が足りません", err);
+else fail("ZIPファイルの読み込みに失敗しました", err);
 });
 }
 
